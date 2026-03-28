@@ -43,8 +43,55 @@ const icons = {
   trash: `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>`,
   undo: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>`,
   alert: `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>`,
+  share: `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>`,
   trophyLg: `<svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6M18 9h1.5a2.5 2.5 0 0 0 0-5H18M4 22h16M10 22V12M14 22V12M8 6h8a2 2 0 0 1 2 2v2a6 6 0 0 1-12 0V8a2 2 0 0 1 2-2z"/></svg>`,
 };
+
+// --- Toast notification ---
+function showToast(msg) {
+  const existing = document.getElementById("toast");
+  if (existing) existing.remove();
+  const toast = document.createElement("div");
+  toast.id = "toast";
+  toast.className = "toast";
+  toast.textContent = msg;
+  document.body.appendChild(toast);
+  setTimeout(() => toast.classList.add("toast-show"), 10);
+  setTimeout(() => { toast.classList.remove("toast-show"); setTimeout(() => toast.remove(), 300); }, 2500);
+}
+
+// --- Share session ---
+async function shareSession(sessionId) {
+  const session = sessions.find(s => s.id === sessionId);
+  if (!session) return;
+  const url = window.location.origin + window.location.pathname + "?session=" + sessionId;
+  const names = session.players.map(p => p.name).join(", ");
+  const text = `Declare Scorer - ${names} (Round ${session.rounds + 1})`;
+
+  if (navigator.share) {
+    try {
+      await navigator.share({ title: "Declare Scorer", text, url });
+    } catch (e) {
+      if (e.name !== "AbortError") copyToClipboard(url);
+    }
+  } else {
+    copyToClipboard(url);
+  }
+}
+
+function copyToClipboard(url) {
+  navigator.clipboard.writeText(url).then(() => {
+    showToast("Link copied! Share it with your friends");
+  }).catch(() => {
+    showToast("Link: " + url);
+  });
+}
+
+// --- URL session loading ---
+function getSessionIdFromURL() {
+  const params = new URLSearchParams(window.location.search);
+  return params.get("session");
+}
 
 // --- Validation ---
 function isValidScore(val) {
@@ -277,6 +324,7 @@ function renderSession() {
     <div class="session-header">
       <button class="back-btn" id="backBtn">${icons.back} <span>Sessions</span></button>
       <div style="display:flex;align-items:center;gap:8px">
+        <button class="share-btn" id="shareBtn" title="Share">${icons.share}</button>
         <button class="wrong-call-btn" id="wrongCallBtn">${icons.alert} Wrong Call</button>
         <div class="round-badge">Round ${session.rounds + 1}</div>
       </div>
@@ -337,7 +385,8 @@ function renderSession() {
 
   app.innerHTML = html;
 
-  document.getElementById("backBtn").onclick = () => { view = "home"; currentSessionId = null; render(); };
+  document.getElementById("backBtn").onclick = () => { view = "home"; currentSessionId = null; history.replaceState(null, "", window.location.pathname); render(); };
+  document.getElementById("shareBtn").onclick = () => shareSession(currentSessionId);
   document.getElementById("wrongCallBtn").onclick = () => { showWrongCall = true; render(); };
 
   if (showWrongCall) {
@@ -547,6 +596,26 @@ function startSync() {
 async function init() {
   app.innerHTML = `<div class="loading">Loading...</div>`;
   sessions = await loadSessions();
+
+  // Auto-open shared session from URL
+  const sharedId = getSessionIdFromURL();
+  if (sharedId) {
+    const found = sessions.find(s => s.id === sharedId);
+    if (found) {
+      currentSessionId = sharedId;
+      view = "session";
+    } else {
+      // Session not in local list — fetch it directly
+      const { data } = await sb.from("declare_sessions").select("*").eq("id", sharedId).single();
+      if (data) {
+        const s = { id: data.id, createdAt: data.created_at, players: data.players, rounds: data.rounds };
+        sessions.unshift(s);
+        currentSessionId = sharedId;
+        view = "session";
+      }
+    }
+  }
+
   startSync();
   render();
 }

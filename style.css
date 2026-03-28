@@ -241,6 +241,27 @@ body {
   font-weight: 700; font-size: 15px; cursor: pointer; font-family: inherit;
 }
 
+/* Share button */
+.share-btn {
+  width: 34px; height: 34px; border-radius: 50%; border: 1.5px solid #E2E8F0;
+  background: #fff; color: #64748B; cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  transition: background 0.15s, color 0.15s;
+}
+.share-btn:hover { background: #F1F5F9; color: #0F172A; }
+.share-btn:active { transform: scale(0.93); }
+
+/* Toast */
+.toast {
+  position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%) translateY(20px);
+  background: #0F172A; color: #fff; padding: 12px 24px; border-radius: 14px;
+  font-size: 14px; font-weight: 600; font-family: 'DM Sans', system-ui, sans-serif;
+  box-shadow: 0 8px 32px rgba(15,23,42,0.25);
+  opacity: 0; transition: opacity 0.3s, transform 0.3s;
+  z-index: 200; white-space: nowrap; max-width: 90vw; overflow: hidden; text-overflow: ellipsis;
+}
+.toast-show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
 /* Loading */
 .loading {
   text-align: center; padding: 80px 0; color: #94A3B8;
