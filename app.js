@@ -46,6 +46,13 @@ const icons = {
   trophyLg: `<svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6M18 9h1.5a2.5 2.5 0 0 0 0-5H18M4 22h16M10 22V12M14 22V12M8 6h8a2 2 0 0 1 2 2v2a6 6 0 0 1-12 0V8a2 2 0 0 1 2-2z"/></svg>`,
 };
 
+// --- Validation ---
+function isValidScore(val) {
+  if (val === "" || val === "-") return false;
+  const n = Number(val);
+  return !isNaN(n) && isFinite(n);
+}
+
 // --- Supabase helpers ---
 async function loadSessions() {
   const { data, error } = await sb.from("declare_sessions").select("*").order("created_at", { ascending: false });
@@ -403,8 +410,8 @@ function renderPlayer() {
       <div class="score-section">
         <label class="score-label">Add Round Score</label>
         <div class="score-row">
-          <input class="score-input" id="scoreInput" type="number" placeholder="Enter points" value="${esc(scoreInput)}" style="border-color:${color.accent}" />
-          <button class="add-btn" id="addScoreBtn" style="background:${color.accent}" ${(scoreInput !== "" && !isNaN(+scoreInput)) ? "" : "disabled"}>Add</button>
+          <input class="score-input" id="scoreInput" type="text" inputmode="numeric" placeholder="Enter points (e.g. -5)" value="${esc(scoreInput)}" style="border-color:${color.accent}" />
+          <button class="add-btn" id="addScoreBtn" style="background:${color.accent}" ${isValidScore(scoreInput) ? "" : "disabled"}>Add</button>
         </div>
         <div class="action-row">
           <button class="declare-btn" id="declareBtn">${icons.trophySm} Declare Win (&minus;5)</button>
@@ -434,11 +441,11 @@ function renderPlayer() {
     input.focus();
     input.oninput = () => {
       scoreInput = input.value;
-      document.getElementById("addScoreBtn").disabled = scoreInput === "" || isNaN(+scoreInput);
+      document.getElementById("addScoreBtn").disabled = !isValidScore(scoreInput);
     };
 
     const addScore = async () => {
-      if (scoreInput === "" || isNaN(+scoreInput)) return;
+      if (!isValidScore(scoreInput)) return;
       p.scores.push(+scoreInput);
       p.total = p.scores.reduce((a, b) => a + b, 0);
       scoreInput = "";
@@ -466,10 +473,39 @@ function renderPlayer() {
   }
 }
 
+// --- Real-time subscription ---
+function subscribeToChanges() {
+  sb.channel("declare_sessions_realtime")
+    .on("postgres_changes", { event: "*", schema: "public", table: "declare_sessions" }, async (payload) => {
+      if (payload.eventType === "INSERT") {
+        const row = payload.new;
+        const exists = sessions.find(s => s.id === row.id);
+        if (!exists) {
+          sessions.unshift({ id: row.id, createdAt: row.created_at, players: row.players, rounds: row.rounds });
+          render();
+        }
+      } else if (payload.eventType === "UPDATE") {
+        const row = payload.new;
+        const idx = sessions.findIndex(s => s.id === row.id);
+        if (idx !== -1) {
+          sessions[idx] = { id: row.id, createdAt: row.created_at, players: row.players, rounds: row.rounds };
+          render();
+        }
+      } else if (payload.eventType === "DELETE") {
+        const row = payload.old;
+        sessions = sessions.filter(s => s.id !== row.id);
+        if (currentSessionId === row.id) { currentSessionId = null; view = "home"; }
+        render();
+      }
+    })
+    .subscribe();
+}
+
 // --- Init ---
 async function init() {
   app.innerHTML = `<div class="loading">Loading...</div>`;
   sessions = await loadSessions();
+  subscribeToChanges();
   render();
 }
 
