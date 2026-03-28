@@ -474,38 +474,80 @@ function renderPlayer() {
 }
 
 // --- Real-time subscription ---
+let realtimeChannel = null;
+
 function subscribeToChanges() {
-  sb.channel("declare_sessions_realtime")
-    .on("postgres_changes", { event: "*", schema: "public", table: "declare_sessions" }, async (payload) => {
-      if (payload.eventType === "INSERT") {
-        const row = payload.new;
-        const exists = sessions.find(s => s.id === row.id);
-        if (!exists) {
-          sessions.unshift({ id: row.id, createdAt: row.created_at, players: row.players, rounds: row.rounds });
-          render();
-        }
-      } else if (payload.eventType === "UPDATE") {
-        const row = payload.new;
-        const idx = sessions.findIndex(s => s.id === row.id);
-        if (idx !== -1) {
-          sessions[idx] = { id: row.id, createdAt: row.created_at, players: row.players, rounds: row.rounds };
-          render();
-        }
-      } else if (payload.eventType === "DELETE") {
-        const row = payload.old;
-        sessions = sessions.filter(s => s.id !== row.id);
-        if (currentSessionId === row.id) { currentSessionId = null; view = "home"; }
+  if (realtimeChannel) {
+    sb.removeChannel(realtimeChannel);
+  }
+
+  realtimeChannel = sb.channel("declare-realtime-" + Date.now())
+    .on("postgres_changes", { event: "INSERT", schema: "public", table: "declare_sessions" }, (payload) => {
+      console.log("[RT] INSERT", payload);
+      const row = payload.new;
+      if (!row) return;
+      const exists = sessions.find(s => s.id === row.id);
+      if (!exists) {
+        sessions.unshift({ id: row.id, createdAt: row.created_at, players: row.players, rounds: row.rounds });
         render();
       }
     })
-    .subscribe();
+    .on("postgres_changes", { event: "UPDATE", schema: "public", table: "declare_sessions" }, (payload) => {
+      console.log("[RT] UPDATE", payload);
+      const row = payload.new;
+      if (!row) return;
+      const idx = sessions.findIndex(s => s.id === row.id);
+      if (idx !== -1) {
+        sessions[idx] = { id: row.id, createdAt: row.created_at, players: row.players, rounds: row.rounds };
+        render();
+      }
+    })
+    .on("postgres_changes", { event: "DELETE", schema: "public", table: "declare_sessions" }, (payload) => {
+      console.log("[RT] DELETE", payload);
+      const row = payload.old;
+      if (!row) return;
+      sessions = sessions.filter(s => s.id !== row.id);
+      if (currentSessionId === row.id) { currentSessionId = null; view = "home"; }
+      render();
+    })
+    .subscribe((status, err) => {
+      console.log("[RT] Subscription status:", status, err || "");
+      if (status === "SUBSCRIBED") {
+        console.log("[RT] Realtime connected successfully");
+      }
+      if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
+        console.error("[RT] Connection failed, falling back to polling");
+        startPolling();
+      }
+    });
+}
+
+// --- Polling fallback (in case realtime doesn't work) ---
+let pollInterval = null;
+
+function startPolling() {
+  if (pollInterval) return;
+  pollInterval = setInterval(async () => {
+    const fresh = await loadSessions();
+    const changed = JSON.stringify(fresh) !== JSON.stringify(sessions);
+    if (changed) {
+      sessions = fresh;
+      render();
+    }
+  }, 3000);
+}
+
+// Always start polling as a reliable fallback alongside realtime
+function startSync() {
+  subscribeToChanges();
+  startPolling();
 }
 
 // --- Init ---
 async function init() {
   app.innerHTML = `<div class="loading">Loading...</div>`;
   sessions = await loadSessions();
-  subscribeToChanges();
+  startSync();
   render();
 }
 
